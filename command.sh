@@ -374,3 +374,27 @@ The difference is:
 My choice for our project: `pyproject.toml` + `pip install -e .` during development, and package installation inside the Docker image for production.
 
 This gives us a clean and professional foundation without unnecessarily complicating the architecture.
+
+
+
+OpenAlex helps you discover and organize research papers.
+
+
+
+arXiv helps you discover papers and obtain their PDFs for text extraction and RAG ingestion.
+
+
+Day 2 summary
+
+What we did: fetched 100 random AI papers from OpenAlex and 100 recent papers from arXiv, saved both as raw files, and inspected their fields, missing values, duplicates and relationships.
+
+What we learned:
+
+OpenAlex gives metadata and references. It has the abstract, authors, topics and reference lists, which is what the knowledge graph is built from. Its data is rich but incomplete: 27% of papers have no references, 25% have no institution, and only 50% have a PDF link.
+arXiv gives full text. Every arXiv paper has a PDF, so arXiv is the main source for text chunks. Its metadata is thin: no author IDs, almost no DOIs.
+Matching goes through the arXiv ID, not the DOI. arXiv’s DOI field is almost always empty. We find the arXiv ID inside OpenAlex’s locations, or build the DOI 10.48550/arXiv.<id> ourselves.
+Filter the types. About 14% of OpenAlex works are datasets, books, software and similar, so we keep only articles, conference papers and preprints.
+Allow missing data. Only title and abstract are required, and every other column must accept NULL.
+The sample is too small for the graph. 0 of 1,910 references pointed to another paper in the sample, which is why Day 5 loads 5,000 papers from a focused topic.
+
+Output: data/raw/openalex_sample.json, data/raw/arxiv_sample.json, data/raw/arxiv_sample.xml, the three exploration scripts and docs/data_exploration.md.
