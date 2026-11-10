@@ -1,0 +1,176 @@
+name: open-intelligence-graph
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 10s
+  timeout: 5s
+  retries: 10
+  start_period: 10s
+
+services:
+  # ---------------- core: always started ----------------
+  postgres:
+    image: postgres:16
+    container_name: oig-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports: ["5432:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+
+  minio:
+    image: bitnamilegacy/minio:latest
+    container_name: oig-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_DEFAULT_BUCKETS: ${MINIO_BUCKET_RAW},${MINIO_BUCKET_PDFS}
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [minio_data:/bitnami/minio/data]
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: oig-qdrant
+    restart: unless-stopped
+    ports: ["6333:6333", "6334:6334"]
+    volumes: [qdrant_data:/qdrant/storage]
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333'"]
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: oig-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 512M
+    ports: ["7474:7474", "7687:7687"]
+    volumes: [neo4j_data:/data]
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+
+  # ---------------- optional: profiles ----------------
+  airflow-init:
+    image: apache/airflow:2.9.3-python3.11
+    container_name: oig-airflow-init
+    profiles: ["orchestration", "full"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${AIRFLOW_DB}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      PYTHONPATH: /opt/airflow/src
+      _PIP_ADDITIONAL_REQUIREMENTS: httpx minio pymupdf qdrant-client neo4j pydantic-settings pyyaml tenacity pandas
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create --username ${AIRFLOW_ADMIN_USER} --password ${AIRFLOW_ADMIN_PASSWORD}
+      --firstname Admin --lastname User --role Admin --email admin@example.com || true"
+    restart: "no"
+
+  airflow-webserver:
+    image: apache/airflow:2.9.3-python3.11
+    container_name: oig-airflow-webserver
+    profiles: ["orchestration", "full"]
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    command: webserver
+    ports: ["8080:8080"]
+    volumes: &airflow-volumes
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - airflow_logs:/opt/airflow/logs
+
+  airflow-scheduler:
+    image: apache/airflow:2.9.3-python3.11
+    container_name: oig-airflow-scheduler
+    profiles: ["orchestration", "full"]
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    command: scheduler
+    volumes: *airflow-volumes
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: oig-langfuse
+    profiles: ["observability", "full"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${LANGFUSE_DB}
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: oig
+      LANGFUSE_INIT_ORG_NAME: open-intelligence-graph
+      LANGFUSE_INIT_PROJECT_ID: oig
+      LANGFUSE_INIT_PROJECT_NAME: open-intelligence-graph
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD}
+    ports: ["3000:3000"]
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: oig-ollama
+    profiles: ["llm", "full"]
+    restart: unless-stopped
+    ports: ["11434:11434"]
+    volumes: [ollama_data:/root/.ollama]
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "ollama", "list"]
+
+  app:
+    build: .
+    container_name: oig-app
+    profiles: ["app", "full"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      MINIO_ENDPOINT: minio:9000
+      QDRANT_URL: http://qdrant:6333
+      NEO4J_URI: bolt://neo4j:7687
+      OLLAMA_HOST: http://ollama:11434
+      LANGFUSE_HOST: http://langfuse:3000
+    ports: ["8501:8501"]
+
+volumes:
+  postgres_data:
+  minio_data:
+  qdrant_data:
+  neo4j_data:
+  airflow_logs:
+  ollama_data:

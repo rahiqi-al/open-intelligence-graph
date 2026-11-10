@@ -1,0 +1,13 @@
+httpx
+pandas
+sqlalchemy
+psycopg[binary]
+minio
+pymupdf
+qdrant-client
+neo4j
+pydantic
+pydantic-settings
+pyyaml
+python-dotenv
+tenacity
