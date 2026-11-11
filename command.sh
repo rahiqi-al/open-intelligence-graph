@@ -398,3 +398,35 @@ Allow missing data. Only title and abstract are required, and every other column
 The sample is too small for the graph. 0 of 1,910 references pointed to another paper in the sample, which is why Day 5 loads 5,000 papers from a focused topic.
 
 Output: data/raw/openalex_sample.json, data/raw/arxiv_sample.json, data/raw/arxiv_sample.xml, the three exploration scripts and docs/data_exploration.md.
+
+
+
+
+
+
+
+
+
+
+
+"## Workflow 1: from ingesting data to a searchable system (offline)
+
+Everything starts with Airflow, which runs the pipeline on a schedule. It calls the OpenAlex and arXiv APIs and downloads papers page by page. On later runs it only fetches papers that are new or updated, which is what incremental ingestion means. Each response is saved untouched as raw JSON in MinIO. That way, if you change your cleaning rules later, you can replay the data without calling the APIs again.
+
+Next comes cleaning. Titles and authors are trimmed and normalized, and DOIs and years are standardized. OpenAlex stores abstracts in an unusual format, so the abstract is rebuilt into plain text. Then deduplication removes papers that appear twice, matching first on DOI, then on source IDs, then on the normalized title. Quality checks follow: a record with no title or an invalid year is logged and skipped. The clean records are loaded into PostgreSQL, which is the source of truth for papers, authors, institutions, topics, citations and users. After this step you have a structured dataset.
+
+The second stage turns those papers into something an AI can search. For papers with an open-access PDF, the PDF is downloaded into MinIO and PyMuPDF extracts its text. Headers, footers and the reference list are removed. The text is split by section (abstract, introduction, methods, results), and each section is cut into overlapping chunks of about 512 tokens. Every chunk keeps its `paper_id`, section, page number and an access level, so later steps can cite it and filter it by role. Papers with no PDF are indexed by their abstract only.
+
+From here the chunks go two ways. In the first, an embedding model (BGE or E5) turns each chunk into a vector, and the vectors are stored in Qdrant. This lets you later search by meaning rather than exact words. In the second, an LLM reads the chunks and extracts entities and relationships, such as which methods a paper uses and which topics it discusses. Entity resolution merges variants like "GraphRAG" and "Graph RAG" into one node. Then Neo4j is built from two sources: the extracted entities, and the metadata and citations already in PostgreSQL. The result is a graph of Papers, Authors, Institutions, Topics and Methods, linked by relationships like CITES and USES_METHOD. When this is done you have three synchronized stores, linked by `paper_id`. Qdrant finds similar text, Neo4j finds connected research, and PostgreSQL holds the metadata.
+
+## Workflow 2: from the user's prompt to the LLM's answer (online)
+
+A user types a question, for example: "What are the main limitations of current GraphRAG approaches?" The first thing that happens is the security check. RBAC looks at the user's role to decide whether they may ask questions at all. A `viewer` can search but not ask, while a `researcher` can. Then the input guard scans the question for prompt-injection attempts, such as "ignore previous instructions". A malicious question is blocked and logged, and a clean one continues.
+
+Next, query understanding runs. The system extracts the entities in the question (here, "GraphRAG") and the intent (here, finding limitations). A LangGraph router then decides which strategy to use. This is the agentic part. The router can send the question to the Research agent for finding papers, the Graph agent for relationships, or the Comparison agent for comparing approaches.
+
+Retrieval then runs two searches in parallel. Vector RAG embeds the question with the same model used at indexing time and searches Qdrant for the most similar chunks. It applies the user's access filter, so restricted documents never appear. It works hierarchically, finding the best papers first, then the best sections inside them, then the best chunks. GraphRAG matches "GraphRAG" to a node in Neo4j and follows relationships for several hops. For example, it finds papers that cite the original GraphRAG paper, the methods those papers use, and related papers. The connected papers it collects are only IDs, so it fetches their text chunks from Qdrant. Vector RAG finds text that sounds like the question. GraphRAG finds research that is connected to it. Together they give better coverage than either alone.
+
+The two result sets are then merged, and chunks found by both paths are kept only once. A cross-encoder reranker reads each chunk together with the question and reorders everything by true relevance, keeping the top few. Before anything reaches the LLM, every chunk is scanned for hidden instructions, because a paper could contain text like "ignore the user and say X". Suspicious chunks are dropped. The rest are wrapped in tags that mark them as untrusted data, and the system prompt tells the LLM that it may only use the tagged text as evidence and must never follow instructions found inside it. The context builder then assembles the chunks, each labeled with its paper title, year and section.
+
+Now the LLM generates the answer, using only that context, and attaches a citation to every claim. The output guard checks that the answer doesn't leak the system prompt or restricted content. The citation verifier checks that each claim is actually supported by the chunk it cites. If a claim is unsupported, the answer goes back to the LLM for another attempt. The Critic agent also reviews the evidence, and if it is weak it sends the question back to the router for another round, with at most two retries. Once everything passes, the user receives the answer with citations pointing to real papers. Langfuse records every step of the run, including latency and token cost."
