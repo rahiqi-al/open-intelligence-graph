@@ -8,3 +8,4 @@ data/raw/*
 data/pdfs/
 *.pdf
 .DS_Store
+logs/

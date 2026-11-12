@@ -1,0 +1,47 @@
+project: open-intelligence-graph
+
+ingestion:
+  openalex:
+    per_page: 100
+    base_filter: "primary_topic.field.id:17,has_abstract:true,type:article|conference-paper|preprint"
+  arxiv:
+    page_size: 100
+
+  # One query = one topic, split into yearly partitions.
+  # max_per_window = maximum works fetched per source, per year.
+  queries:
+    - name: rag
+      openalex_search: '"retrieval augmented generation"'
+      arxiv_search: 'all:"retrieval augmented generation"'
+      year_from: 2020
+      max_per_window: 150
+    - name: knowledge_graph
+      openalex_search: '"knowledge graph"'
+      arxiv_search: 'all:"knowledge graph"'
+      year_from: 2018
+      max_per_window: 150
+    - name: llm
+      openalex_search: '"large language model"'
+      arxiv_search: 'all:"large language model"'
+      year_from: 2019
+      max_per_window: 150
+    - name: graph_ml
+      openalex_search: '"graph neural network"'
+      arxiv_search: 'all:"graph neural network"'
+      year_from: 2018
+      max_per_window: 100
+    - name: data_engineering
+      openalex_search: '"data engineering"'
+      arxiv_search: 'all:"data engineering"'
+      year_from: 2018
+      max_per_window: 100
+
+chunking:
+  max_tokens: 512
+  overlap_tokens: 64
+
+retrieval:
+  vector_top_k: 20
+  graph_top_k: 20
+  rerank_top_k: 8
+  max_graph_hops: 2

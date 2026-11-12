@@ -430,3 +430,334 @@ Retrieval then runs two searches in parallel. Vector RAG embeds the question wit
 The two result sets are then merged, and chunks found by both paths are kept only once. A cross-encoder reranker reads each chunk together with the question and reorders everything by true relevance, keeping the top few. Before anything reaches the LLM, every chunk is scanned for hidden instructions, because a paper could contain text like "ignore the user and say X". Suspicious chunks are dropped. The rest are wrapped in tags that mark them as untrusted data, and the system prompt tells the LLM that it may only use the tagged text as evidence and must never follow instructions found inside it. The context builder then assembles the chunks, each labeled with its paper title, year and section.
 
 Now the LLM generates the answer, using only that context, and attaches a citation to every claim. The output guard checks that the answer doesn't leak the system prompt or restricted content. The citation verifier checks that each claim is actually supported by the chunk it cites. If a claim is unsupported, the answer goes back to the LLM for another attempt. The Critic agent also reviews the evidence, and if it is weak it sends the question back to the router for another round, with at most two retries. Once everything passes, the user receives the answer with citations pointing to real papers. Langfuse records every step of the run, including latency and token cost."
+
+
+
+
+
+
+OpenAlex ID: OpenAlex's own ID for identifying its records.
+DOI: A permanent publication identifier used across academic platforms, not just OpenAlex.
+
+
+
+
+
+"Yes, exactly. You have two separate pipelines, each with a different responsibility.
+
+## 1. Offline pipeline: ingestion and indexing
+
+Runs automatically in the background
+
+Airflow orchestrates this pipeline on a schedule (for example, every day at 2 AM).
+
+Its job is to prepare the research data so it becomes searchable.
+
+Airflow (Scheduler)
+
+Triggers the ingestion and indexing workflow
+
+OpenAlex API + arXiv API
+
+MinIO — Store raw JSON and PDFs
+
+Cleaning, deduplication and validation
+
+PostgreSQL — Store structured metadata
+
+PDF extraction and chunking
+
+BGE / E5
+
+Qdrant
+
+Text embeddings
+
+LLM extraction
+
+Neo4j
+
+Entities and relationships
+
+PostgreSQL also provides metadata and citation relationships for Neo4j.
+
+When the pipeline finishes:
+
+- PostgreSQL contains structured metadata.
+- Qdrant contains vectors representing paper chunks.
+- Neo4j contains the research knowledge graph.
+
+These three databases are linked through `paper_id`.
+
+Important: Airflow orchestrates the workflow. It does not perform all the processing itself. It triggers Python scripts, Docker tasks or other processing jobs.
+
+## 2. Online pipeline: retrieval and answer generation
+
+Runs when a user asks a question
+
+This pipeline does not need to wait for Airflow or run on a schedule. It is triggered by a user request.
+
+User asks a question
+
+Security checks + RBAC
+
+Query understanding + LangGraph router
+
+Vector RAG
+
+Qdrant
+
+GraphRAG
+
+Neo4j
+
+Merge results + deduplication
+
+Cross-encoder reranking
+
+Security checks + context building
+
+LLM generates the answer
+
+Citation verification + Critic
+
+Final answer with citations
+
+Langfuse monitors the execution, including latency, token usage and errors.
+
+## 3. The difference between the two pipelines
+
+|              | Offline pipeline                       | Online pipeline               |
+| ------------ | -------------------------------------- | ----------------------------- |
+| Trigger      | Airflow schedule                       | User question                 |
+| Execution    | Background                             | On demand                     |
+| Main purpose | Prepare and index data                 | Retrieve and generate answers |
+| Uses         | APIs, MinIO, PostgreSQL, Qdrant, Neo4j | Qdrant, Neo4j, LLM            |
+| Output       | Searchable research database           | Answer with citations         |
+
+Think about it this way:
+
+- Pipeline 1: Collects, processes and stores research papers so they are ready for AI search.
+- Pipeline 2: Uses those already-indexed papers to answer users' questions.
+
+One important detail: the offline pipeline can run again periodically to add new papers or update existing ones. The online pipeline accesses the latest successfully indexed data without rebuilding the entire database for every question."
+
+
+
+
+
+
+
+
+
+Yes, exactly. You have two separate pipelines, each with a different responsibility.
+
+## 1. Offline pipeline: ingestion and indexing
+
+Runs automatically in the background
+
+Airflow orchestrates this pipeline on a schedule (for example, every day at 2 AM).
+
+Its job is to prepare the research data so it becomes searchable.
+
+Airflow (Scheduler)
+
+Triggers the ingestion and indexing workflow
+
+OpenAlex API + arXiv API
+
+MinIO — Store raw JSON and PDFs
+
+Cleaning, deduplication and validation
+
+PostgreSQL — Store structured metadata
+
+PDF extraction and chunking
+
+BGE / E5
+
+Qdrant
+
+Text embeddings
+
+LLM extraction
+
+Neo4j
+
+Entities and relationships
+
+PostgreSQL also provides metadata and citation relationships for Neo4j.
+
+When the pipeline finishes:
+
+- PostgreSQL contains structured metadata.
+- Qdrant contains vectors representing paper chunks.
+- Neo4j contains the research knowledge graph.
+
+These three databases are linked through `paper_id`.
+
+Important: Airflow orchestrates the workflow. It does not perform all the processing itself. It triggers Python scripts, Docker tasks or other processing jobs.
+
+## 2. Online pipeline: retrieval and answer generation
+
+Runs when a user asks a question
+
+This pipeline does not need to wait for Airflow or run on a schedule. It is triggered by a user request.
+
+User asks a question
+
+Security checks + RBAC
+
+Query understanding + LangGraph router
+
+Vector RAG
+
+Qdrant
+
+GraphRAG
+
+Neo4j
+
+Merge results + deduplication
+
+Cross-encoder reranking
+
+Security checks + context building
+
+LLM generates the answer
+
+Citation verification + Critic
+
+Final answer with citations
+
+Langfuse monitors the execution, including latency, token usage and errors.
+
+## 3. The difference between the two pipelines
+
+|              | Offline pipeline                       | Online pipeline               |
+| ------------ | -------------------------------------- | ----------------------------- |
+| Trigger      | Airflow schedule                       | User question                 |
+| Execution    | Background                             | On demand                     |
+| Main purpose | Prepare and index data                 | Retrieve and generate answers |
+| Uses         | APIs, MinIO, PostgreSQL, Qdrant, Neo4j | Qdrant, Neo4j, LLM            |
+| Output       | Searchable research database           | Answer with citations         |
+
+Think about it this way:
+
+- Pipeline 1: Collects, processes and stores research papers so they are ready for AI search.
+- Pipeline 2: Uses those already-indexed papers to answer users' questions.
+
+One important detail: the offline pipeline can run again periodically to add new papers or update existing ones. The online pipeline accesses the latest successfully indexed data without rebuilding the entire database for every question.
+
+
+
+
+
+
+
+
+
+
+
+This configuration defines what papers your pipeline collects from OpenAlex and how many.
+
+### 1. General settings
+
+| Parameter         | Meaning                                          |
+| ----------------- | ------------------------------------------------ |
+| `per_page: 100`   | Fetch 100 papers per API request.                |
+| `year_from: 2018` | Only collect papers published from 2018 onwards. |
+| `base_filter`     | Apply common filters to all queries.             |
+
+Base filters:
+
+- `primary_topic.field.id:17`: Only papers belonging to OpenAlex field ID 17.
+- `has_abstract:true`: Papers must have an abstract.
+- `type:article|conference-paper|preprint`: Only collect these three publication types.
+
+### 2. Five research queries
+
+Each query searches for papers on a specific topic.
+
+| Query            | Search term                    | Maximum papers |
+| ---------------- | ------------------------------ | -------------- |
+| RAG              | Retrieval augmented generation | 1,500          |
+| Knowledge Graph  | Knowledge graph                | 1,500          |
+| LLM              | Large language model           | 1,000          |
+| Graph ML         | Graph neural network           | 500            |
+| Data Engineering | Data engineering               | 500            |
+| Total            |                                | 5,000          |
+
+### 3. What happens?
+
+Your ingestion pipeline:
+
+1. Sends five different searches to OpenAlex.
+2. Retrieves papers matching each topic.
+3. Collects up to the specified maximum for each query.
+4. Downloads their metadata and abstracts (and potentially PDFs through a separate process).
+5. Stores them for further processing.
+
+Why five queries?
+
+Because you want a focused research corpus covering related topics. This also helps your knowledge graph identify relationships between papers through their citations.
+
+
+&&&&
+
+Pagination: cursor paging, 100 works per page.
+Raw storage: every page is saved untouched in MinIO at raw-json/openalex/<query>/<run time>/page_0001.json.
+Incremental: results are sorted newest first. Each successful run records the newest publication date it saw. The next run asks only for works from that date on.
+Errors: retries with exponential backoff on timeouts, 429 and 5xx errors. Any other error fails the run, and it is recorded.
+Logging: console plus logs/ingestion.log.
+Corpus focus: 5 focused queries (RAG, knowledge graph, LLM, graph neural network, data engineering) for about 5,000 papers. Papers on one topic cite each other, which the graph needs.
+
+
+
+
+
+
+
+
+
+Design
+Partition loading: each query is split into yearly partitions. A partition is one source, one query and one year, and it is fetched on its own. This works for any year range.
+Closed years (backfill): a closed year is fetched once, most-cited papers first (arXiv: most relevant first). Once it succeeds it is skipped on every later run. Most-cited papers give you more papers that cite each other, which the graph needs.
+Current year (incremental): this partition is fetched newest first, starting at the newest date already seen. A second run fetches only a few works.
+Raw layout in MinIO (Hive-style): source=openalex/query=rag/window=2024/ingest_date=2026-11-11/run_ts=.../page_0001.json. Day 5 can read only the new ingest_date partitions.
+Failures: a failed partition is recorded, and the next run retries it. One failed partition doesn’t stop the others.
+Airflow later: plan() returns the list of partitions that need work. Each partition becomes one parallel Airflow task.
+Test runs: runs with --limit are marked test and never move the incremental marker.
+
+
+
+We have two stages:
+1. Backfill: Collect existing papers from past years (2018–2025) to build our initial database.
+2. Incremental loading: After that, regularly fetch only newly published papers (2026 onwards).
+In simple terms: First, collect historical data. Then, keep updating the database with new data.
+
+
+
+
+
+
+
+One Airflow DAG execution can trigger multiple ingestion tasks, and each task gets its own run_id.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
