@@ -45,3 +45,11 @@ retrieval:
   graph_top_k: 20
   rerank_top_k: 8
   max_graph_hops: 2
+  
+processing:
+  min_title_chars: 8
+  min_abstract_chars: 80
+  year_min: 1990
+  allowed_types: [article, conference-paper, preprint]
+  allowed_languages: [en]
+  max_reject_rate: 0.30
