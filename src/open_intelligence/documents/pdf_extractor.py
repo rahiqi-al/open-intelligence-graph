@@ -1,6 +1,8 @@
 """Extract text from a PDF, page by page, with PyMuPDF."""
 import pymupdf
 
+pymupdf.TOOLS.mupdf_display_errors(False)  # harmless "could not parse color space" warnings
+
 
 def extract_pages(pdf_bytes: bytes, max_pages: int) -> list[str]:
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:

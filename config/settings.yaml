@@ -66,3 +66,11 @@ pdfs:
   host_interval_s:
     arxiv.org: 3.5
     export.arxiv.org: 3.5
+
+chunker:
+  chunk_tokens: 512
+  overlap_tokens: 64
+  tokens_per_word: 1.4
+  min_chunk_words: 40
+  min_alpha_ratio: 0.5
+  skip_sections: [acknowledg]
