@@ -74,3 +74,12 @@ chunker:
   min_chunk_words: 40
   min_alpha_ratio: 0.5
   skip_sections: [acknowledg]
+
+indexing:
+  collection: chunks
+  model: BAAI/bge-small-en-v1.5
+  max_seq_length: 512
+  batch_size: 32
+  papers_per_batch: 16
+  max_papers_per_run: 500
+  query_prefix: "Represent this sentence for searching relevant passages: "
