@@ -53,3 +53,16 @@ processing:
   allowed_types: [article, conference-paper, preprint]
   allowed_languages: [en]
   max_reject_rate: 0.30
+
+pdfs:
+  max_per_run: 500
+  workers: 6
+  timeout_s: 60
+  min_bytes: 10000
+  max_bytes: 60000000
+  max_pages: 120
+  min_text_chars: 2000
+  default_interval_s: 1.0
+  host_interval_s:
+    arxiv.org: 3.5
+    export.arxiv.org: 3.5
