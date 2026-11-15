@@ -761,3 +761,352 @@ One Airflow DAG execution can trigger multiple ingestion tasks, and each task ge
 
 
 
+How it works
+Scope: abstracts only, most cited papers first, about 100 per run. Running the LLM on all 30k chunks would take weeks on your CPU, so the full text stays in Qdrant for vector search.
+Entities: Method, Dataset, Task, Metric and Tool, each with a role (proposed, used or compared).
+Relations: BASED_ON, IMPROVES_ON, OUTPERFORMS, USED_FOR, EVALUATED_ON and PART_OF.
+Reliable output: Ollama is forced to answer in an exact JSON schema, and the prompt has one worked example.
+Hallucination check: an entity is kept only if it really appears in the title or abstract. Generic words (“model”, “approach”) are dropped, spelling variants are merged, and a relation is kept only if both ends survived.
+Storage: results go in a Postgres table, paper_extractions (small JSON), because LLM calls are slow and we don’t want to redo them. Day 10 reads it, merges duplicates and writes the graph to Neo4j.
+
+
+Postgres first or directly to Neo4j: you can write straight to Neo4j, and it would work. I’d still keep the Postgres step for two reasons:
+
+LLM calls are slow. If we change the graph design or the duplicate-merge rules, we rebuild Neo4j from Postgres in seconds instead of redoing hours of LLM work.
+Duplicates need all papers at once. “GPT-4” and “gpt4” from different papers must be merged before the graph is written, and Postgres also tracks done and failed papers so a run can resume.
+
+It costs almost nothing, because it’s a small JSON table.
+
+Parallel paths: yes, vector embedding and graph extraction don’t depend on each other, so in the Airflow DAG on Day 11 they run as two parallel branches. On your laptop they share the same CPU, so running both at once won’t be faster. One difference from the earlier plan is that the graph path reads the abstract from Postgres, not the chunks, because running the LLM on 30k chunks would take weeks.
+
+
+The idea is simple: Use PostgreSQL as temporary storage before creating the Neo4j graph.
+
+You could send the data directly to Neo4j, but PostgreSQL makes the process easier to manage.
+Why keep PostgreSQL?
+1. Avoid repeating expensive LLM calls
+
+Imagine you extract information from 1,000 research papers using an LLM.
+- The LLM extracts entities and relationships.
+- You save the extracted results in PostgreSQL.
+- Later, you decide to change how your Neo4j graph is structured.
+Without PostgreSQL, you might need to process all 1,000 papers again using the LLM.
+
+With PostgreSQL, you simply take the already-extracted data and rebuild Neo4j.
+
+2. Detect and merge duplicates
+
+Imagine two papers mention the same technology:
+- Paper 1: GPT-4
+- Paper 2: gpt4
+They refer to the same entity.
+
+PostgreSQL lets you collect the extracted entities from all papers first, identify duplicates, merge them, and then send the clean results to Neo4j.
+
+3. Track processing progress
+
+PostgreSQL also tracks each paper's status:
+- Done: Successfully processed.
+- Failed: Processing failed.
+- Pending: Not processed yet.
+If your pipeline stops, you can resume from where it stopped instead of starting over.
+
+
+
+
+A profile in Docker Compose lets you group services and decide which ones to start. docker compose --profile orchestration up -d  mean run the default one core services and theone that have profile orchestration.
+
+
+
+
+
+
+
+
+
+Ollama = The engine that runs AI models.
+Model = The actual AI (e.g. Llama 3.1, Mistral, Qwen).
+Run the container: Starts the Ollama server.
+
+
+
+Pull the model: Downloads the model into the container's persistent volume.
+
+
+
+Use the model: Ollama loads it into RAM when your Python application sends its first request.
+
+- --limit, --dry-run, --plan, etc.: Arguments that tell the script how to behave. These are called command-line arguments (CLI arguments) or flags. They are used to control how a Python script runs.
+Usually, developers define them using Python's argparse library.
+CLI (Command-Line Interface) arguments are options defined by the developer inside the code to control how a script behaves.
+2. What happens if you don't provide an argument?
+Correct! The script uses its default value.
+
+For example, if the code contains:
+parser.add_argument("--limit", type=int, default=10)
+
+
+
+Then:
+python scripts/run_extraction.py
+
+
+Processes 10 papers.
+
+But:
+python scripts/run_extraction.py --limit 5
+
+
+Processes 5 papers.
+. Two important types
+Arguments with values:
+--limit 5
+--source arxiv
+
+
+You provide a value.
+
+Boolean flags:
+--dry-run
+--verbose
+--force
+
+Developers use CLI arguments to control a script without modifying its code every time.
+
+For example, imagine your extraction script processes 1,000 research papers.
+
+
+You simply include the flag to activate its behavior.
+
+
+Other reasons developers use CLI arguments:
+1. Automation: Run scripts automatically with different parameters using Airflow, cron jobs, or CI/CD pipelines.
+2. Reusability: Use the same script for different projects, datasets, or environments.
+3. Customization: Let users choose settings without needing to understand or edit the code.
+4. Environment control: Specify development, testing, or production configurations.
+5. Scalability: Change the number of records processed depending on available resources.
+6. Reproducibility: Run the same script with the same arguments to reproduce a previous execution.
+7. Error recovery: Use options like --retry or --force to control how failed or existing data is handled.
+8. Integration: Allow other programs to execute Python scripts and pass parameters to them.
+
+
+
+
+
+
+
+Speed: if it’s still around 60 seconds per paper after the shorter prompt, that’s the 3B model on your CPU
+
+
+
+
+
+
+# **1. Qdrant hierarchy (from top to bottom)**
+
+Think of Qdrant as a storage system organized into collections, points, vectors and payloads.
+
+**Qdrant**
+
+Vector database / server
+
+**Collection**
+
+Example: research_papers
+
+**Points**
+
+Each point represents one stored item (usually one chunk)
+
+**Vector**
+
+Numerical representation of the chunk
+
+**Payload**
+
+Original text and metadata
+
+### **Meaning of each level**
+
+| Level      | Meaning                                                |
+| ---------- | ------------------------------------------------------ |
+| Qdrant     | The database server.                                   |
+| Collection | A group of points with a defined vector configuration. |
+| Point      | One individual record stored in a collection.          |
+| Vector     | Numbers representing the semantic meaning of text.     |
+| Payload    | Additional information attached to a point.            |
+
+**Example from your research paper RAG project:**
+
+A research paper is divided into 20 chunks.
+
+- Collection: `research_papers`
+- Points: 20
+- Each point contains one chunk's vector and payload.
+- Payload can contain the chunk text, paper ID, title, page number and other metadata.
+
+Note: A point can contain multiple named vectors if the collection is configured for that.
+
+# **2. Distance metrics in Qdrant**
+
+Distance tells Qdrant how to compare two vectors and determine how close or similar they are.
+
+| Metric      | Simple meaning                                               | How to interpret                                                                      |
+| ----------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| Cosine      | Compares the direction of two vectors.                       | Closer directions = more similar.                                                     |
+| Euclidean   | Measures the straight-line distance between two vectors.     | Smaller distance = closer vectors.                                                    |
+| Dot product | Multiplies corresponding vector values and adds the results. | Larger score generally means greater similarity for appropriately trained embeddings. |
+
+### **Simple explanation of each**
+
+**1. Cosine**
+
+Imagine two arrows:
+
+- If they point in almost the same direction, their vectors are similar.
+- If they point in different directions, they are less similar.
+
+It focuses on direction rather than vector length.
+
+**2. Euclidean**
+
+Imagine two points on a map.
+
+Euclidean measures the straight-line distance between them.
+
+- 2 units apart = closer.
+- 10 units apart = farther.
+
+**3. Dot product**
+
+It compares vectors using multiplication and addition.
+
+It considers both direction and magnitude (length).
+
+The interpretation depends on how your embedding model produces its vectors.
+
+**Important:** Cosine and Euclidean are distance metrics where lower is better. Dot product is a similarity score where higher is generally better.
+
+# **3. Other important things to understand about Qdrant**
+
+These are the concepts you should know when building your RAG pipeline.
+
+| Concept           | Meaning                                             |
+| ----------------- | --------------------------------------------------- |
+| Embedding model   | Converts text chunks into numerical vectors.        |
+| Vector dimensions | Number of values in each vector (e.g. 768 or 1536). |
+| Payload           | Stores text and metadata associated with a point.   |
+| Point ID          | Unique identifier for each point.                   |
+| Similarity search | Finds vectors closest to your query vector.         |
+| Top-K             | Number of closest results to retrieve.              |
+| Filtering         | Restricts searches using metadata.                  |
+| Upsert            | Inserts or updates points.                          |
+| Delete            | Removes points from a collection.                   |
+| Indexing          | Organizes data to make searching faster.            |
+| Persistence       | Keeps your data stored between container restarts.  |
+
+## **4. How this works in your RAG project**
+
+**Research Paper PDF**
+
+**Text Extraction**
+
+**Chunking**
+
+Divide text into smaller pieces
+
+**Embedding Model**
+
+Convert each chunk into a vector
+
+**Qdrant**
+
+Store vectors + payloads as points inside a collection
+
+**User Question**
+
+**Embedding Model**
+
+Convert question into a vector using the same embedding model
+
+**Similarity Search**
+
+Find the most relevant chunks using the distance metric
+
+**LLM**
+
+Generate an answer using retrieved chunks
+
+## **5. Five things you should particularly remember**
+
+1. **Same embedding model:** Use a compatible embedding model for both stored chunks and user queries.
+2. **Same dimensions:** The query vector dimensions must match the collection's vector configuration.
+3. **Distance metric:** Choose a metric compatible with your embedding model.
+4. **Payload:** Store useful metadata so you can identify where each retrieved chunk came from.
+5. **Top-K:** Controls how many chunks you retrieve for the LLM.
+
+For your project, an example payload could look like this:
+
+```
+{
+  "paper_id": "paper_001",
+  "chunk_id": "chunk_005",
+  "text": "Retrieval-Augmented Generation...",
+  "title": "Introduction to RAG",
+  "page": 4,
+  "source": "arxiv"
+}
+```
+
+**My recommendation:** Understand the relationship between Collection → Point → Vector + Payload first. These are the foundations of working with Qdrant.
+
+
+
+Embedding models convert text, images, or other data into numerical vectors that represent their meaning.
+
+### **1. Main types of embedding models**
+
+| Type                  | What they convert                                         |
+| --------------------- | --------------------------------------------------------- |
+| Text Embeddings       | Text into vectors.                                        |
+| Image Embeddings      | Images into vectors.                                      |
+| Multimodal Embeddings | Text, images and sometimes other modalities into vectors. |
+| Audio Embeddings      | Audio into vectors.                                       |
+| Video Embeddings      | Video content into vectors.                               |
+
+### **2. Popular text embedding models**
+
+These are particularly relevant to your RAG project.
+
+| Model             | Provider  |
+| ----------------- | --------- |
+| BGE               | BAAI      |
+| E5                | Microsoft |
+| Nomic Embed       | Nomic     |
+| GTE               | Alibaba   |
+| OpenAI Embeddings | OpenAI    |
+| Jina Embeddings   | Jina AI   |
+| Qwen3-Embedding   | Alibaba   |
+
+### **3. What should you know?**
+
+Embedding models differ in:
+
+- **Dimensions:** Number of values in the resulting vector.
+- **Quality:** How well they capture semantic meaning.
+- **Languages:** Some support multiple languages.
+- **Context length:** How much text they can process at once.
+- **Speed:** How quickly they generate embeddings.
+
+### **4. For your research paper RAG project**
+
+I would consider:
+
+- `BGE`: Strong general-purpose text embeddings.
+- `E5`: Good semantic search.
+- `Qwen3-Embedding`: Modern multilingual embedding family.
+
+**Important:** An embedding model is different from an LLM.
+
+- LLM (Qwen, Llama): Generates answers and extracts information.
+- Embedding model (BGE, E5): Converts text into vectors for similarity search.

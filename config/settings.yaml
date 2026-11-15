@@ -83,3 +83,10 @@ indexing:
   papers_per_batch: 16
   max_papers_per_run: 500
   query_prefix: "Represent this sentence for searching relevant passages: "
+
+extraction:
+  ollama_url: http://localhost:11435
+  model: qwen2.5:3b
+  max_per_run: 100
+  max_abstract_chars: 2500
+  timeout_s: 600
