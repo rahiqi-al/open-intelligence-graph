@@ -35,7 +35,7 @@ ON CONFLICT (paper_id) DO UPDATE SET
 
 
 def extract_papers(limit: int | None = None, retry_failed: bool = False) -> dict:
-    cfg = settings.load_config()["extraction"]
+    cfg = llm.get_config()
     llm.check_ready(cfg)
     stats = {"selected": 0, "done": 0, "failed": 0, "entities": 0, "relations": 0}
     started = time.time()

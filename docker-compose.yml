@@ -61,7 +61,8 @@ services:
 
   # ---------------- optional: profiles ----------------
   airflow-init:
-    image: apache/airflow:2.9.3-python3.11
+    build: ./airflow
+    image: oig-airflow:2.9.3
     container_name: oig-airflow-init
     profiles: ["orchestration", "full"]
     depends_on:
@@ -74,15 +75,39 @@ services:
       AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
       PYTHONPATH: /opt/airflow/src
-      _PIP_ADDITIONAL_REQUIREMENTS: httpx minio pymupdf qdrant-client neo4j pydantic-settings pyyaml tenacity pandas
+      HF_HOME: /opt/airflow/hf_cache
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      QDRANT_URL: http://qdrant:6333
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      OLLAMA_URL: http://ollama:11434
+      OPENALEX_EMAIL: ${OPENALEX_EMAIL:-}
+      OPENALEX_API_KEY: ${OPENALEX_API_KEY:-}
+    volumes: &airflow-volumes
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./config:/opt/airflow/config:ro
+      - airflow_logs:/opt/airflow/logs
+      - hf_cache:/opt/airflow/hf_cache
     command: >
       bash -c "airflow db migrate &&
       airflow users create --username ${AIRFLOW_ADMIN_USER} --password ${AIRFLOW_ADMIN_PASSWORD}
-      --firstname Admin --lastname User --role Admin --email admin@example.com || true"
+      --firstname Admin --lastname User --role Admin --email admin@example.com || true;
+      airflow pools set arxiv_api 1 'arXiv rate limit' &&
+      airflow pools set openalex_api 3 'OpenAlex API' &&
+      airflow pools set heavy_compute 1 'CPU heavy: embeddings and LLM'"
     restart: "no"
 
   airflow-webserver:
-    image: apache/airflow:2.9.3-python3.11
+    image: oig-airflow:2.9.3
     container_name: oig-airflow-webserver
     profiles: ["orchestration", "full"]
     restart: unless-stopped
@@ -91,14 +116,15 @@ services:
         condition: service_completed_successfully
     environment: *airflow-env
     command: webserver
-    ports: ["8080:8080"]
-    volumes: &airflow-volumes
-      - ./airflow/dags:/opt/airflow/dags
-      - ./src:/opt/airflow/src
-      - airflow_logs:/opt/airflow/logs
+    ports:
+      - "8080:8080"
+    volumes: *airflow-volumes
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
 
   airflow-scheduler:
-    image: apache/airflow:2.9.3-python3.11
+    image: oig-airflow:2.9.3
     container_name: oig-airflow-scheduler
     profiles: ["orchestration", "full"]
     restart: unless-stopped
@@ -173,4 +199,5 @@ volumes:
   qdrant_data:
   neo4j_data:
   airflow_logs:
+  hf_cache:
   ollama_data:

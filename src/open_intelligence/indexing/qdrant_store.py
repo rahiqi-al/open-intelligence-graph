@@ -5,7 +5,11 @@ from qdrant_client import QdrantClient, models
 
 
 def get_client() -> QdrantClient:
-    return QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"), check_compatibility=False)
+    url = os.getenv("QDRANT_URL", "http://localhost:6333")
+    try:
+        return QdrantClient(url=url, check_compatibility=False)
+    except TypeError:  # older qdrant-client (e.g. inside the Airflow image)
+        return QdrantClient(url=url)
 
 
 def ensure_collection(client: QdrantClient, name: str, dim: int) -> None:

@@ -6,6 +6,17 @@ import httpx
 from open_intelligence.extraction.schema import JSON_SCHEMA
 from open_intelligence.ingestion.common import retrying
 
+
+import os
+from open_intelligence import settings
+
+
+def get_config() -> dict:
+    """The extraction settings; OLLAMA_URL (set in Docker for Airflow) overrides the URL in settings.yaml."""
+    cfg = dict(settings.load_config()["extraction"])
+    cfg["ollama_url"] = os.getenv("OLLAMA_URL", cfg["ollama_url"])
+    return cfg
+
 PROMPT_VERSION = "v2"
 
 SYSTEM_PROMPT = """You extract a knowledge graph from a research paper's title and abstract. Answer with JSON only.
